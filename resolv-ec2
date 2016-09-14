@@ -1,0 +1,88 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""Get the public DNS name of a running EC2 instance.
+
+Author: Daniel Roschka <daniel@smaato.com>
+Copyright: Smaato Inc. 2016
+"""
+
+from __future__ import print_function
+
+import argparse
+import sys
+from itertools import chain
+
+from boto3.session import Session
+from botocore.exceptions import BotoCoreError
+
+
+def find_instance(ec2_session, identifier):
+    """Try to find an EC2 instance based on the given identifier."""
+    reservations = ec2_session.describe_instances(Filters=[
+        {"Name": "instance-state-name",
+         "Values": ["running"]
+         }])
+    instances = list(chain.from_iterable(
+        [res["Instances"] for res in reservations["Reservations"]])
+    )
+    for instance in instances:
+        instance_name = ''
+        try:
+            for item in instance["Tags"]:
+                if item["Key"] == "Name":
+                    instance_name = item["Value"]
+                    break
+        except KeyError:
+            pass
+        if identifier in (instance["InstanceId"],
+                          instance_name,
+                          instance["PrivateDnsName"],
+                          instance["PrivateDnsName"].split('.')[0],
+                          instance["PublicDnsName"],
+                          instance["PublicDnsName"].split('.')[0],
+                          instance["PrivateIpAddress"],
+                          instance["PublicIpAddress"]):
+            print(instance["PublicDnsName"])
+            sys.exit(0)
+    print("No matching instance found.", file=sys.stderr)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Get the public DNS name of '
+                                     'a running EC2 instance.')
+    parser.add_argument('--aws-access-key-id',
+                        dest='aws_access_key_id',
+                        help='Specify a value here if you want to use a '
+                        'different AWS_ACCESS_KEY_ID than configured in the '
+                        'AWS CLI.')
+    parser.add_argument('--aws-secret-access-key',
+                        dest='aws_secret_access_key',
+                        help='Specify a value here if you want to use a '
+                        'different AWS_SECRET_ACCESS_KEY than configured in '
+                        'the AWS CLI.')
+    parser.add_argument('--profile',
+                        dest='profile_name',
+                        help='The AWS CLI profile to use. Defaults to the '
+                        'default profile.')
+    parser.add_argument('--region',
+                        dest='region_name',
+                        default='us-east-1',
+                        help='The AWS region to connect to. Defaults to the '
+                        'one configured for the AWS CLI.')
+    parser.add_argument('instance',
+                        help='A unique identifier identifying the EC2 '
+                        'instance.')
+    args = parser.parse_args()
+
+    session_args = {key: value for key, value in vars(args).items()
+                    if key in ['aws_access_key_id',
+                               'aws_secret_access_key',
+                               'profile_name',
+                               'region_name']}
+    try:
+        session = Session(**session_args)
+    except BotoCoreError as exc:
+        print("Connecting to the EC2 API failed: %s", exc, file=sys.stderr)
+        sys.exit(1)
+
+    find_instance(session.client('ec2'), args.instance)
